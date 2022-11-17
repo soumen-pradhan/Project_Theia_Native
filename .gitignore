@@ -13,3 +13,4 @@
 .externalNativeBuild
 .cxx
 local.properties
+/opencv_4_6_0/
