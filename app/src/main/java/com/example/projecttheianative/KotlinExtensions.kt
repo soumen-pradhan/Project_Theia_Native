@@ -12,24 +12,22 @@ import android.media.ImageReader
 import android.os.Build
 import android.util.AndroidException
 import android.util.Log
+import android.util.Range
 import android.util.Size
 import android.view.Surface
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.channels.onFailure
-import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.suspendCancellableCoroutine
-import org.opencv.core.CvType
-import org.opencv.core.Mat
-import org.opencv.imgproc.Imgproc
 import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.time.ExperimentalTime
+import kotlin.time.measureTime
 
 /** Marker class for our custom exception */
 class CvCamera2Exception(msg: String? = null, cause: Throwable? = null) :
@@ -38,6 +36,10 @@ class CvCamera2Exception(msg: String? = null, cause: Throwable? = null) :
 /** Allow destructuring of class Size */
 operator fun Size.component1() = width
 operator fun Size.component2() = height
+
+/** Allow destructuring of class Range */
+operator fun <T : Comparable<T>?> Range<T>.component1(): T = lower
+operator fun <T : Comparable<T>?> Range<T>.component2(): T = upper
 
 /** Printf style formatting */
 infix fun Any.fmt(template: String) = template.format(this)
@@ -54,7 +56,7 @@ suspend fun CameraManager.open(cameraId: String): CameraDevice =
         val cameraDeviceCallback = object : CameraDevice.StateCallback() {
             /** Camera opened */
             override fun onOpened(cameraDevice: CameraDevice) {
-                continuation.resume(cameraDevice)
+                if (continuation.isActive) continuation.resume(cameraDevice)
                 continuation.invokeOnCancellation { cameraDevice.close() }
             }
 
@@ -74,7 +76,7 @@ suspend fun CameraManager.open(cameraId: String): CameraDevice =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             // API Level 28
             val executor = continuation.context[CoroutineDispatcher]?.asExecutor()
-                ?: Dispatchers.Default.asExecutor()
+                ?: throw CvCamera2Exception("No Dispatcher found")
 
             openCamera(cameraId, executor, cameraDeviceCallback)
         } else {
@@ -111,7 +113,7 @@ suspend fun CameraDevice.captureSession(surface: Surface): CameraCaptureSession 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             // API Level 28
             val executor = continuation.context[CoroutineDispatcher]?.asExecutor()
-                ?: Dispatchers.Default.asExecutor()
+                ?: throw CvCamera2Exception("No Dispatcher found")
 
             val sessionConfig = SessionConfiguration(
                 SessionConfiguration.SESSION_HIGH_SPEED,
@@ -128,118 +130,39 @@ suspend fun CameraDevice.captureSession(surface: Surface): CameraCaptureSession 
     }
 
 /** Computation on each frame */
-// TODO Add some cancellation mechanism
 fun ImageReader.acquireImage(): Flow<Image> = callbackFlow {
-
     val listener = ImageReader.OnImageAvailableListener {
-        val image: Image = it.acquireLatestImage() ?: return@OnImageAvailableListener
-        trySendBlocking(image)
-            .onFailure { e ->
-                Log.d("ImageReader.acquire", "Could not send Image", e)
+        val image: Image? = it.acquireLatestImage()
+
+        if (image == null) {
+            Log.d("KotlinExt", "Image cannot be acquired")
+            return@OnImageAvailableListener
+        }
+
+        trySend(image).isSuccess.trueOrNull()
+            ?: run {
+                image.close()
+                Log.d("KotlinExt", "Image Closed")
             }
     }
 
-    // TODO Handler to Executor
+    /*
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {  // API Level 28
+        val executor = coroutineContext[CoroutineDispatcher]?.asExecutor()
+            ?: throw CvCamera2Exception("No Dispatcher found")
+
+        setOnImageAvailableListenerWithExecutor(listener, executor)
+    } else {
+        setOnImageAvailableListener(listener, null)
+    }
+    */
+
     setOnImageAvailableListener(listener, null)
     awaitClose { setOnImageAvailableListener({}, null) }
-}.conflate()
 
-/** Convert Image to Matrix */
-fun Image.toRgb(): Mat {
-    val chromaPixelStride = planes[1].pixelStride // for me always 2
+}.cancellable().conflate()
 
-    val planeY = planes[0].buffer
-    val planeYStep = planes[0].rowStride
-
-    val planeU = planes[1].buffer
-    val planeUStep = planes[1].rowStride
-
-    val planeV = planes[2].buffer
-    val planeVStep = planes[2].rowStride
-
-    val rgbMat = if (chromaPixelStride == 2) { // Chroma channels interleaved
-        assert(planes[0].pixelStride == 1)
-        assert(planes[2].pixelStride == 2)
-
-        val yMat = Mat(height, width, CvType.CV_8UC1, planeY, planeYStep.toLong())
-        val uMat = Mat(height / 2, width / 2, CvType.CV_8UC2, planeU, planeUStep.toLong())
-        val vMat = Mat(height / 2, width / 2, CvType.CV_8UC2, planeV, planeVStep.toLong())
-
-        val addressDiff = vMat.dataAddr() - uMat.dataAddr()
-        if (addressDiff > 0) {
-            assert(addressDiff == 1L)
-            Imgproc.cvtColorTwoPlane(yMat, uMat, yMat, Imgproc.COLOR_YUV2RGB_NV12)
-        } else {
-            assert(addressDiff == -1L)
-            Imgproc.cvtColorTwoPlane(yMat, vMat, yMat, Imgproc.COLOR_YUV2RGB_NV21)
-        }
-
-        uMat.release()
-        vMat.release()
-
-        yMat
-    } else { // Chroma channels not interleaved
-        val yuvBytes = ByteArray(width * (height + height / 2))
-        var yuvBytesOffset = 0
-
-        if (planeYStep == width) {
-            planeY.get(yuvBytes, 0, width * height)
-            yuvBytesOffset = width * height
-        } else {
-            val padding = planeYStep - width
-            for (i in 0 until height) {
-                planeY.get(yuvBytes, yuvBytesOffset, width)
-                yuvBytesOffset += width
-                if (i < height - 1) {
-                    planeY.position(planeY.position() + padding)
-                }
-            }
-            assert(yuvBytesOffset == width * height)
-        }
-
-        val chromaRowPadding = planes[1].rowStride - width / 2
-        if (chromaRowPadding == 0) {
-            /** When row stride of Chroma Channel == width, copy entire channels */
-            planeU.get(yuvBytes, yuvBytesOffset, width * height / 4)
-            yuvBytesOffset += width * height / 4
-            planeV.get(yuvBytes, yuvBytesOffset, width * height / 4)
-        } else {
-            for (i in 0 until height / 2) {
-                planeU.get(yuvBytes, yuvBytesOffset, width / 4)
-                yuvBytesOffset += width / 2
-                if (i < height / 2 - 1) {
-                    planeU.position(planeU.position() + chromaRowPadding)
-                }
-            }
-
-            for (i in 0 until height / 2) {
-                planeV.get(yuvBytes, yuvBytesOffset, width / 4)
-                yuvBytesOffset += width / 2
-                if (i < height / 2 - 1) {
-                    planeV.position(planeU.position() + chromaRowPadding)
-                }
-            }
-        }
-
-        Mat(height + height / 2, width, CvType.CV_8UC1).also {
-            it.put(0, 0, yuvBytes)
-            Imgproc.cvtColor(it, it, Imgproc.COLOR_YUV2RGB_I420, 3)
-        }
-    }
-
-    return rgbMat
-}
-
-/** Check Mat and Bitmap Config if they are valid for matToBitmap */
-val Mat.validConv: Boolean
-    get() = type() == CvType.CV_8UC1 || type() == CvType.CV_8UC3 || type() == CvType.CV_8UC4
-
-val Bitmap.validConv: Boolean
-    get() = config == Bitmap.Config.ARGB_8888 || config == Bitmap.Config.RGB_565
-
-/** Release these matrices */
-fun release(vararg mats: Mat) = mats.forEach { it.release() }
-
+/** Process image and write to Bitmap */
 fun Image.process(bitmap: Bitmap) = processYuvBuffer(
     width, height,
     planes[0].buffer, planes[0].rowStride,
@@ -247,7 +170,7 @@ fun Image.process(bitmap: Bitmap) = processYuvBuffer(
     planes[2].buffer, planes[2].rowStride,
     planes[1].pixelStride == 2,
     bitmap
-)
+).also { Log.d("KotlinExt", "Frame processed") }
 
 external fun processYuvBuffer(
     img_width: Int, img_height: Int,
@@ -257,3 +180,15 @@ external fun processYuvBuffer(
     interleaved: Boolean,
     bitmap: Bitmap
 )
+
+@OptIn(ExperimentalTime::class)
+fun main() {
+    println("Hello World")
+
+    val elapsed = measureTime {
+        Thread.sleep(100)
+        println("Measuring time via measureTime")
+    }
+
+    println("Elapsed: $elapsed ms")
+}

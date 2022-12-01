@@ -28,7 +28,7 @@ set_target_properties(
 add_library(
         projecttheianative # Sets the name of the library.
         SHARED # Sets the library as a shared library.
-        native-lib.cpp # Provides a relative path to your source file(s).
+        native-lib.cpp dehaze.cpp # Provides a relative path to your source file(s).
 )
 
 # Searches for a specified prebuilt library and stores the path as a

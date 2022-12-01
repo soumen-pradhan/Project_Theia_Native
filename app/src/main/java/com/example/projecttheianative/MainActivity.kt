@@ -12,7 +12,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.projecttheianative.databinding.ActivityMainBinding
+import kotlinx.coroutines.Dispatchers
 import org.opencv.android.OpenCVLoader
 
 class MainActivity : AppCompatActivity() {
@@ -39,6 +41,7 @@ class MainActivity : AppCompatActivity() {
             fpsMeasure = FpsMeasure()
             // frameListener = { darkChannel(it) }
         }.also {
+            lifecycleScope.coroutineContext + Dispatchers.Default
             lifecycle.addObserver(it)
         }
     }
@@ -60,12 +63,6 @@ class MainActivity : AppCompatActivity() {
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
     }
-
-    /**
-     * A native method that is implemented by the 'projecttheianative' native library,
-     * which is packaged with this application.
-     */
-    private external fun stringFromJNI(): String
 
     companion object {
         // Used to load the 'projecttheianative' library on application startup.

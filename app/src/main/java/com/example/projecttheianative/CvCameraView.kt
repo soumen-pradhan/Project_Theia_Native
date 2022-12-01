@@ -7,7 +7,6 @@ import android.util.AttributeSet
 import android.util.Size
 import android.view.SurfaceHolder
 import android.view.SurfaceView
-import kotlinx.coroutines.CoroutineScope
 import org.opencv.core.Core
 import org.opencv.core.Mat
 import kotlin.math.min
@@ -25,8 +24,9 @@ abstract class CvCameraView : SurfaceView, SurfaceHolder.Callback {
     protected val bitmapCache: Bitmap =
         Bitmap.createBitmap(4200, 2200, BITMAP_FORMAT)
 
-    suspend fun drawFrame(scope: CoroutineScope, img: Image) {
-//        val modified = frameListener?.invoke(rgb) ?: rgb
+    suspend fun drawFrame(img: Image) {
+        // withContext(Dispatchers.Default) { img.process(bitmapCache) }
+        // Screen turns green, then it freezes
 
         img.process(bitmapCache)
 
@@ -106,7 +106,7 @@ class FpsMeasure(
         const val TAG = "FpsMeter"
         val PAINT = Paint().apply {
             color = Color.RED
-            textSize = 40F //px
+            textSize = 40F // px
         }
     }
 }
