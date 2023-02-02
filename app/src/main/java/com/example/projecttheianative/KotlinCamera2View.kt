@@ -147,7 +147,7 @@ class KotlinCamera2View : CvCameraView, DefaultLifecycleObserver {
             imageReader.acquireImage().collect { image ->
                 assert(image.planes.size == 3)
                 drawFrame(image)
-                image.close().also { Log.d(TAG, "Image Closed") }
+                image.close()
             }
         }
     }

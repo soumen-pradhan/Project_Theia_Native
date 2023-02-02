@@ -26,8 +26,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.time.ExperimentalTime
-import kotlin.time.measureTime
 
 /** Marker class for our custom exception */
 class CvCamera2Exception(msg: String? = null, cause: Throwable? = null) :
@@ -73,8 +71,7 @@ suspend fun CameraManager.open(cameraId: String): CameraDevice =
             }
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // API Level 28
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) { // API Level 28
             val executor = continuation.context[CoroutineDispatcher]?.asExecutor()
                 ?: throw CvCamera2Exception("No Dispatcher found")
 
@@ -110,8 +107,7 @@ suspend fun CameraDevice.captureSession(surface: Surface): CameraCaptureSession 
             }
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // API Level 28
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) { // API Level 28
             val executor = continuation.context[CoroutineDispatcher]?.asExecutor()
                 ?: throw CvCamera2Exception("No Dispatcher found")
 
@@ -142,7 +138,7 @@ fun ImageReader.acquireImage(): Flow<Image> = callbackFlow {
         trySend(image).isSuccess.trueOrNull()
             ?: run {
                 image.close()
-                Log.d("KotlinExt", "Image Closed")
+                // Log.d("KotlinExt", "Image Closed")
             }
     }
 
@@ -170,7 +166,7 @@ fun Image.process(bitmap: Bitmap) = processYuvBuffer(
     planes[2].buffer, planes[2].rowStride,
     planes[1].pixelStride == 2,
     bitmap
-).also { Log.d("KotlinExt", "Frame processed") }
+)
 
 external fun processYuvBuffer(
     img_width: Int, img_height: Int,
@@ -180,15 +176,3 @@ external fun processYuvBuffer(
     interleaved: Boolean,
     bitmap: Bitmap
 )
-
-@OptIn(ExperimentalTime::class)
-fun main() {
-    println("Hello World")
-
-    val elapsed = measureTime {
-        Thread.sleep(100)
-        println("Measuring time via measureTime")
-    }
-
-    println("Elapsed: $elapsed ms")
-}

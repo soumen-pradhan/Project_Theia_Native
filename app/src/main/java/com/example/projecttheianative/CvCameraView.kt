@@ -35,8 +35,8 @@ abstract class CvCameraView : SurfaceView, SurfaceHolder.Callback {
         val scale =
             min(width.toDouble() / bitmapCache.width, height.toDouble() / bitmapCache.height)
 
-        val (scaledWt, scaledHt) =
-            (scale * bitmapCache.width).toInt() to (scale * bitmapCache.height).toInt()
+        val scaledWt = (scale * bitmapCache.width).toInt()
+        val scaledHt = (scale * bitmapCache.height).toInt()
 
         val adjLeft = (this.width - scaledWt) / 2
         val adjTop = (this.height - scaledHt) / 2

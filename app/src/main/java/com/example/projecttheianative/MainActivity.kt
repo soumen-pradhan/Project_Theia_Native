@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
 
         // Example of a call to a native method
         id.cameraView.apply {
-            maxPreviewSize = Size(800, 500)
+            maxPreviewSize = Size(400, 400)
             fpsMeasure = FpsMeasure()
             // frameListener = { darkChannel(it) }
         }.also {

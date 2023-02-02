@@ -8,13 +8,40 @@
 
 #include "dehaze.h"
 
-void
-mat2bitmap(
-    JNIEnv* env, cv::Mat& src, jobject bitmap, bool premultiply_alpha
-);
+void mat2bitmap(JNIEnv* env, cv::Mat& src, jobject bitmap, bool premultiply_alpha);
 
-void
-rotate_mat(cv::Mat& mat, u32 rotation);
+void rotate_mat(cv::Mat& mat, u32 rotation);
+
+auto mat_type(i32 type) {
+    std::string r;
+
+    u8 depth = type & CV_MAT_DEPTH_MASK;
+    u8 chans = 1 + (type >> CV_CN_SHIFT);
+
+    switch (depth) {
+        case CV_8U: r = "8U";
+            break;
+        case CV_8S: r = "8S";
+            break;
+        case CV_16U: r = "16U";
+            break;
+        case CV_16S: r = "16S";
+            break;
+        case CV_32S: r = "32S";
+            break;
+        case CV_32F: r = "32F";
+            break;
+        case CV_64F: r = "64F";
+            break;
+        default: r = "User";
+            break;
+    }
+
+    r += "C";
+    r += (chans + '0');
+
+    return r;
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_projecttheianative_KotlinExtensionsKt_processYuvBuffer(
@@ -125,17 +152,27 @@ Java_com_example_projecttheianative_KotlinExtensionsKt_processYuvBuffer(
         cv::cvtColor(rgb, rgb, cv::COLOR_YUV2RGB_I420, 3);
     }
 
-    // LOGD("Rgb Matrix built");
-    cv::Mat res = dark_channel(rgb);
-//    cv::Mat res = sobel(rgb);
+    rgb.convertTo(rgb, CV_32FC3, 1.0 / 255.0);
 
-    mat2bitmap(env, res, bitmap, false);
+    {
+        cv::Mat dark = dark_channel(rgb, 15); // 3ms
+
+        auto brightPatch = bright_patch(rgb, dark);
+        auto airlight = cv::mean(rgb(brightPatch)); // 1ms
+
+        cv::Mat estimate = transmission_estimate(rgb, airlight); // 20ms;
+        rgb = recover_image(rgb, estimate, airlight); // 6ms
+
+        //auto refined = transmission_refine(bgr, estimate);
+    }
+
+    rgb.convertTo(rgb, CV_8UC1, 255, 0);
+    mat2bitmap(env, rgb, bitmap, false);
+
+    // cv::Mat res = sobel(rgb);
 }
 
-void
-mat2bitmap(
-    JNIEnv* env, cv::Mat& src, jobject bitmap, bool premultiply_alpha
-) {
+void mat2bitmap(JNIEnv* env, cv::Mat& src, jobject bitmap, bool premultiply_alpha) {
     AndroidBitmapInfo info;
     void* pixels = nullptr;
 
@@ -212,21 +249,16 @@ mat2bitmap(
     }
 }
 
-void
-rotate_mat(cv::Mat& mat, u32 rotation) {
+void rotate_mat(cv::Mat& mat, u32 rotation) {
     switch (rotation) {
-        case 90:
-            cv::transpose(mat, mat);
+        case 90:cv::transpose(mat, mat);
             cv::flip(mat, mat, 1);
             break;
-        case 180:
-            cv::flip(mat, mat, -1);
+        case 180:cv::flip(mat, mat, -1);
             break;
-        case 270:
-            cv::transpose(mat, mat);
+        case 270:cv::transpose(mat, mat);
             cv::flip(mat, mat, 0);
             break;
-        default:
-            break;
+        default:break;
     }
 }
